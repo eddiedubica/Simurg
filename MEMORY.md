@@ -1,59 +1,82 @@
 # Simurg — Автоматизация отдела продаж (AmoCRM)
 
 ## Цель
-Автоматизация отчётности и контроля отдела продаж:
-1. Ежедневный отчёт в Telegram-чат ОП (данные из AmoCRM + Google Sheets)
-2. Уведомления если клиенту не отвечают 1.5 часа
-3. Отчёт по работе менеджеров (клиенты, звонки, диалоги)
+Ежедневная автоматическая отчётность для отдела продаж в Telegram.
 
 ## Stack
-- Python 3.11+
-- amocrm-api / requests (работа с AmoCRM API)
-- google-api-python-client (Google Sheets)
-- python-telegram-bot / aiogram (Telegram)
-- APScheduler или cron (расписание)
+- Python 3.12 (Vercel serverless)
+- requests (AmoCRM API + Telegram API)
+- Vercel Cron Jobs (расписание)
 
-## Источники данных
-- AmoCRM API — сделки, контакты, события, звонки, воронки
-- Google Sheets — таблица оплат: https://docs.google.com/spreadsheets/d/15aUo-QchmT5YFdTyrKuSdX4l6MAYNnC7tYe89LGo_lo/
-- Telegram — канал доставки отчётов и уведомлений
+## Деплой
+- **Платформа:** Vercel (serverless)
+- **GitHub:** github.com/eddiedubica/Simurg (private)
+- **URL:** simurg.vercel.app
+- **Cron:** каждый день 8:30 МСК → `GET /api/reports`
+- **Env vars:** настроены в Vercel Dashboard
 
 ## Структура
 ```
 Simurg/
-├── MEMORY.md
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── src/
-│   ├── config.py          — настройки, env переменные
-│   ├── amocrm_client.py   — клиент AmoCRM API
-│   ├── sheets_client.py   — клиент Google Sheets API
-│   ├── telegram_bot.py    — отправка сообщений в Telegram
-│   ├── reports/
-│   │   ├── daily_report.py    — ежедневный отчёт ОП
-│   │   └── manager_report.py  — отчёт по менеджерам
-│   ├── monitors/
-│   │   └── response_monitor.py — мониторинг времени ответа
-│   └── main.py            — точка входа, расписание
+├── api/
+│   └── reports.py          — Vercel serverless function (точка входа)
+├── lib/
+│   ├── amocrm_client.py    — клиент AmoCRM API v4
+│   ├── telegram_bot.py     — отправка в Telegram (с топиками)
+│   ├── report_daily.py     — ежедневный отчёт ОП
+│   ├── report_managers.py  — отчёт по менеджерам
+│   └── report_funnel.py    — конверсия воронки (по понедельникам)
+├── src/                    — старая версия (локальный запуск, не используется)
+├── vercel.json             — настройки крона
+├── requirements.txt        — только requests
+└── .env                    — локальные секреты (не в git)
 ```
 
-## .env секреты
-- AMOCRM_SUBDOMAIN — поддомен в AmoCRM
-- AMOCRM_CLIENT_ID / CLIENT_SECRET — OAuth приложение AmoCRM
-- AMOCRM_ACCESS_TOKEN / REFRESH_TOKEN — токены авторизации
-- GOOGLE_SHEETS_ID — ID таблицы оплат
-- GOOGLE_SERVICE_ACCOUNT_KEY — путь к ключу сервисного аккаунта Google
-- TELEGRAM_BOT_TOKEN — токен Telegram бота
-- TELEGRAM_CHAT_ID_SALES — ID чата отдела продаж
+## Источники данных
+- **AmoCRM API** — все данные из CRM (сделки, поля, события, пользователи)
+- **Telegram** — доставка отчётов в топик "Отчёты" группы "GSG | Симург ЭЗ | УПР"
+- **Google Sheets** — подключен, но таблица пока пустая (не используется)
 
-## Как запускать
-```bash
-python src/main.py
-```
+## AmoCRM — ключевые поля сделок
+- Оплачено (ID 821273) — сумма оплаты
+- Осталось оплатить (ID 821275) — дебиторка
+- Стоимость тарифа (ID 821277) — полная цена
+- Название тарифа (ID 821271) — ментор/наставник
+- Тип оплаты (ID 843125) — Автооплата / Оплата ОП / Консультация / Возврат
+- Статус заказа (ID 843285) — Новый / Частично оплачен / Завершен / Отменен
+
+## AmoCRM — воронка "База" (ID 9932206)
+Обращения → Предзапись → Заявка → 1-4 касание → Лид вышел на связь →
+Оффер озвучен → Счет выставлен → Рассрочка одобрена → Дожим →
+Предоплата → ВР → Автооплата → Возврат → Успешно/Закрыто
+
+## Логика отчётов
+- **Базы** = теги сделок (кроме "Автооплата" и "Оплата ОП"). Формат: обработано/всего. Обработано = этап правее Заявки
+- **Приоритет тегов:** если есть "Предоплата" или "ВР" — остальные теги игнорируются
+- **Продажи ОП / Автооплаты** = сделки на этапах Предоплата, ВР, Автооплата, Успешно реализовано
+- **На этапе принятия решения** = Оффер озвучен + Счет выставлен + Рассрочка одобрена + Дожим
+- **Конверсия воронки** — только по понедельникам
+
+## .env секреты (также в Vercel env vars)
+- AMOCRM_SUBDOMAIN=simurglife
+- AMOCRM_CLIENT_ID — OAuth ID интеграции
+- AMOCRM_CLIENT_SECRET — секретный ключ интеграции
+- AMOCRM_ACCESS_TOKEN — долгосрочный JWT токен
+- TELEGRAM_BOT_TOKEN — бот @gsg_simurg_bot
+- TELEGRAM_CHAT_ID_SALES — группа GSG (-1002227863966)
+- TELEGRAM_THREAD_ID_SALES — топик "Отчёты" (2033)
+
+## Что НЕ трогать
+- lib/ — рабочие модули для Vercel
+- api/reports.py — точка входа для крона
+- vercel.json — расписание
 
 ## Известные проблемы
-- (пока нет)
+- Vercel CLI иногда даёт "Unexpected error" на билде — нужно переждать или деплоить через GitHub
+- Google Sheets подключен но таблица пустая — данные берутся только из AmoCRM
+- src/ — старая локальная версия, можно удалить после стабильного деплоя на Vercel
 
 ## История изменений
-- 2026-03-17: Инициализация проекта, планирование архитектуры
+- 2026-03-17: Создание проекта, подключение AmoCRM + Telegram
+- 2026-03-17: Ежедневный отчёт, отчёт по менеджерам, конверсия воронки
+- 2026-03-17: Переход на Vercel serverless, деплой, GitHub repo
