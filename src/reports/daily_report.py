@@ -135,21 +135,29 @@ def build_daily_report(amo: AmoCRMClient):
         if yesterday_start <= updated <= yesterday_end and paid > 0:
             sales_yesterday += paid
 
-        # Подсчёт по типу оплаты
-        if payment_type == "Оплата ОП":
-            op_sales += 1
-            op_sales_sum += paid
-        elif payment_type == "Консультация":
-            consultations += 1
-            consultations_sum += paid
-        elif payment_type == "Автооплата":
-            auto_payments += 1
-            auto_payments_sum += paid
-        elif payment_type == "Автооплата и Оплата ОП":
-            auto_payments += 1
-            auto_payments_sum += paid
-            op_sales += 1
-        elif payment_type == "Возврат":
+        # Этапы оплат: Предоплата, ВР, Автооплата, Успешно реализовано
+        payment_stages = {78917202, 78917206, 78917210, 142}
+
+        if status_id in payment_stages and paid > 0:
+            if payment_type == "Оплата ОП" or payment_type == "Автооплата и Оплата ОП":
+                op_sales += 1
+                op_sales_sum += paid
+            elif payment_type == "Автооплата":
+                auto_payments += 1
+                auto_payments_sum += paid
+            elif payment_type == "Консультация":
+                consultations += 1
+                consultations_sum += paid
+            else:
+                # Если тип не указан — определяем по этапу
+                if status_id == 78917210:  # Этап Автооплата
+                    auto_payments += 1
+                    auto_payments_sum += paid
+                else:
+                    op_sales += 1
+                    op_sales_sum += paid
+
+        if payment_type == "Возврат" or status_id == 79048314:
             returns += 1
 
         # Полные vs предоплаты
