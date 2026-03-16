@@ -195,7 +195,13 @@ def build_daily_report(amo: AmoCRMClient):
         is_processed = status_id in processed_stages
 
         SKIP_TAGS = {"Автооплата", "Оплата ОП"}
-        tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", []) if t["name"] not in SKIP_TAGS]
+        # Приоритетные теги — если есть, то остальные не считаем
+        PRIORITY_TAGS = {"Предоплата", "ВР"}
+        all_tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", []) if t["name"] not in SKIP_TAGS]
+
+        priority = [t for t in all_tags if t in PRIORITY_TAGS]
+        tags = priority if priority else all_tags
+
         for tag in tags:
             if tag not in bases:
                 bases[tag] = {"total": 0, "processed": 0}
