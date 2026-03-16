@@ -182,10 +182,25 @@ def build_daily_report(amo: AmoCRMClient):
         tariffs[tariff_key]["count"] += 1
         tariffs[tariff_key]["paid"] += paid
 
-        # По тегам (базы)
+        # По тегам (базы): всего и обработано (правее Заявки)
+        # Этапы правее Заявки = Первое касание и дальше
+        processed_stages = {
+            84345658, 84345662, 84345666, 84345670,  # 1-4 касание
+            84345674,  # Лид вышел на связь
+            84345678, 84345682, 84345686, 84345690,   # Оффер, Счёт, Рассрочка, Дожим
+            78917202, 78917206, 78917210,              # Предоплата, ВР, Автооплата
+            79048314,                                  # Возврат
+            142, 143,                                  # Закрытые
+        }
+        is_processed = status_id in processed_stages
+
         tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", [])]
         for tag in tags:
-            bases[tag] = bases.get(tag, 0) + 1
+            if tag not in bases:
+                bases[tag] = {"total": 0, "processed": 0}
+            bases[tag]["total"] += 1
+            if is_processed:
+                bases[tag]["processed"] += 1
 
     # Этапы где идёт "дожим" (оффер, счёт, рассрочка, дожим)
     decision_stages = ["Оффер озвучен", "Счет выставлен", "Рассрочка одобрена", "Дожим"]
@@ -194,11 +209,11 @@ def build_daily_report(amo: AmoCRMClient):
     # === ФОРМИРУЕМ ОТЧЁТ ===
     lines = [f"<b>📊 Отчёт {report_date}</b>\n"]
 
-    # Базы в работе (по тегам)
+    # Базы в работе (по тегам): обработано/всего
     if bases:
         lines.append("<b>Какие базы в работе:</b>\n")
-        for tag, count in sorted(bases.items(), key=lambda x: -x[1]):
-            lines.append(f"– {tag}: {count}")
+        for tag, data in sorted(bases.items(), key=lambda x: -x[1]["total"]):
+            lines.append(f"– {tag} {data['processed']}/{data['total']}")
         lines.append("")
 
     # Распределение по этапам воронки
