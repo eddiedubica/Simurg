@@ -194,7 +194,8 @@ def build_daily_report(amo: AmoCRMClient):
         }
         is_processed = status_id in processed_stages
 
-        tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", [])]
+        SKIP_TAGS = {"Автооплата", "Оплата ОП"}
+        tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", []) if t["name"] not in SKIP_TAGS]
         for tag in tags:
             if tag not in bases:
                 bases[tag] = {"total": 0, "processed": 0}
