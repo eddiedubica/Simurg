@@ -1,0 +1,27 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# AmoCRM
+AMOCRM_SUBDOMAIN = os.getenv("AMOCRM_SUBDOMAIN")
+AMOCRM_ACCESS_TOKEN = os.getenv("AMOCRM_ACCESS_TOKEN")
+AMOCRM_REFRESH_TOKEN = os.getenv("AMOCRM_REFRESH_TOKEN")
+AMOCRM_CLIENT_ID = os.getenv("AMOCRM_CLIENT_ID")
+AMOCRM_CLIENT_SECRET = os.getenv("AMOCRM_CLIENT_SECRET")
+AMOCRM_REDIRECT_URI = os.getenv("AMOCRM_REDIRECT_URI")
+AMOCRM_BASE_URL = f"https://{AMOCRM_SUBDOMAIN}.amocrm.ru"
+
+# Google Sheets
+GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID")
+GOOGLE_SERVICE_ACCOUNT_KEY = os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY", "service-account.json")
+
+# Telegram
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID_SALES = os.getenv("TELEGRAM_CHAT_ID_SALES")
+
+# Настройки мониторинга
+RESPONSE_TIMEOUT_MINUTES = int(os.getenv("RESPONSE_TIMEOUT_MINUTES", "90"))
+CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "10"))
+DAILY_REPORT_HOUR = int(os.getenv("DAILY_REPORT_HOUR", "9"))
+DAILY_REPORT_MINUTE = int(os.getenv("DAILY_REPORT_MINUTE", "0"))
