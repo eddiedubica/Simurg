@@ -1,10 +1,12 @@
 """
 Simurg — Автоматизация отдела продаж.
 
-Запускает:
+Расписание:
 1. Мониторинг неотвеченных клиентов (каждые 10 мин)
-2. Ежедневный отчёт в чат ОП (каждый день в 9:00)
-3. Отчёт по менеджерам (каждый день в 9:15)
+2. Мониторинг зависших сделок (каждые 3 часа)
+3. Ежедневный отчёт в чат ОП (9:00)
+4. Отчёт по менеджерам (9:15)
+5. Конверсия воронки (понедельник 9:30)
 """
 
 import sys
@@ -14,8 +16,10 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from config import CHECK_INTERVAL_MINUTES, DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE
 from amocrm_client import AmoCRMClient
 from monitors.response_monitor import run_monitor
+from monitors.stale_deals import run_stale_check
 from reports.daily_report import send_daily_report
 from reports.manager_report import send_manager_report
+from reports.funnel_report import send_funnel_report
 from telegram_bot import send_message
 
 # Логирование
@@ -47,7 +51,9 @@ def main():
 
     scheduler = BlockingScheduler(timezone="Europe/Moscow")
 
-    # Мониторинг неотвеченных — каждые N минут
+    # === МОНИТОРИНГ ===
+
+    # Неотвеченные клиенты — каждые N минут
     scheduler.add_job(
         run_monitor,
         "interval",
@@ -57,7 +63,20 @@ def main():
         name="Мониторинг неотвеченных клиентов",
     )
 
-    # Ежедневный отчёт — каждый день
+    # Зависшие сделки — каждые 3 часа (9:00, 12:00, 15:00, 18:00)
+    scheduler.add_job(
+        run_stale_check,
+        "cron",
+        hour="9,12,15,18",
+        minute=0,
+        args=[amo],
+        id="stale_deals",
+        name="Мониторинг зависших сделок",
+    )
+
+    # === ЕЖЕДНЕВНЫЕ ОТЧЁТЫ ===
+
+    # Ежедневный отчёт ОП
     scheduler.add_job(
         send_daily_report,
         "cron",
@@ -68,7 +87,7 @@ def main():
         name="Ежедневный отчёт ОП",
     )
 
-    # Отчёт по менеджерам — каждый день через 15 мин после основного
+    # Отчёт по менеджерам
     scheduler.add_job(
         send_manager_report,
         "cron",
@@ -79,10 +98,26 @@ def main():
         name="Отчёт по менеджерам",
     )
 
-    logger.info(f"Расписание:")
-    logger.info(f"  - Мониторинг неотвеченных: каждые {CHECK_INTERVAL_MINUTES} мин")
+    # === ЕЖЕНЕДЕЛЬНЫЕ ОТЧЁТЫ ===
+
+    # Конверсия воронки — каждый понедельник
+    scheduler.add_job(
+        send_funnel_report,
+        "cron",
+        day_of_week="mon",
+        hour=DAILY_REPORT_HOUR,
+        minute=DAILY_REPORT_MINUTE + 30,
+        args=[amo],
+        id="funnel_report",
+        name="Конверсия воронки (еженедельно)",
+    )
+
+    logger.info("Расписание:")
+    logger.info(f"  - Неотвеченные клиенты: каждые {CHECK_INTERVAL_MINUTES} мин")
+    logger.info(f"  - Зависшие сделки: 9:00, 12:00, 15:00, 18:00")
     logger.info(f"  - Ежедневный отчёт: {DAILY_REPORT_HOUR}:{DAILY_REPORT_MINUTE:02d}")
     logger.info(f"  - Отчёт по менеджерам: {DAILY_REPORT_HOUR}:{DAILY_REPORT_MINUTE + 15:02d}")
+    logger.info(f"  - Конверсия воронки: пн {DAILY_REPORT_HOUR}:{DAILY_REPORT_MINUTE + 30:02d}")
 
     try:
         scheduler.start()
