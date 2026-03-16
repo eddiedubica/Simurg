@@ -3,11 +3,24 @@
 Собирает данные из AmoCRM + Google Sheets.
 """
 
+import locale
 import logging
 from datetime import datetime, timedelta
 
 import sys
 sys.path.insert(0, "..")
+
+# Русская локаль для дат
+try:
+    locale.setlocale(locale.LC_TIME, "ru_RU.UTF-8")
+except locale.Error:
+    pass
+
+MONTHS_RU = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
 
 from amocrm_client import AmoCRMClient
 from sheets_client import get_payments_data
@@ -30,7 +43,7 @@ def build_daily_report(amo: AmoCRMClient):
     """Собирает и форматирует ежедневный отчёт."""
     yesterday = _get_yesterday()
     yesterday_str = yesterday.strftime("%d.%m.%Y")
-    report_date = yesterday.strftime("%d %B")
+    report_date = f"{yesterday.day} {MONTHS_RU[yesterday.month]}"
 
     # === 1. ПОЛУЧАЕМ ВОРОНКИ И СТАТУСЫ ===
     pipelines = amo.get_pipelines()

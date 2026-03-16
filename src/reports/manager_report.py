@@ -10,6 +10,12 @@ from datetime import datetime, timedelta
 import sys
 sys.path.insert(0, "..")
 
+MONTHS_RU = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
 from amocrm_client import AmoCRMClient
 from telegram_bot import send_message
 
@@ -93,7 +99,8 @@ def build_manager_report(amo: AmoCRMClient):
             messages_by_manager[user_id] = messages_by_manager.get(user_id, 0) + 1
 
     # === ФОРМИРУЕМ ОТЧЁТ ===
-    lines = [f"<b>📊 Отчёт по менеджерам за {yesterday.strftime('%d.%m.%Y')}</b>\n"]
+    report_date = f"{yesterday.day} {MONTHS_RU[yesterday.month]}"
+    lines = [f"<b>📊 Отчёт по менеджерам за {report_date}</b>\n"]
 
     # Сортируем менеджеров по количеству сделок (от большего к меньшему)
     sorted_managers = sorted(
