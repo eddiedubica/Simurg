@@ -7,9 +7,9 @@ import requests
 
 class AmoCRMClient:
     def __init__(self):
-        self.subdomain = os.getenv("AMOCRM_SUBDOMAIN")
+        self.subdomain = os.getenv("AMOCRM_SUBDOMAIN", "").strip()
         self.base_url = f"https://{self.subdomain}.amocrm.ru"
-        self.access_token = os.getenv("AMOCRM_ACCESS_TOKEN")
+        self.access_token = os.getenv("AMOCRM_ACCESS_TOKEN", "").strip()
         self.session = requests.Session()
         self.session.headers.update({
             "Authorization": f"Bearer {self.access_token}",

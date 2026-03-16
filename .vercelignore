@@ -1,0 +1,6 @@
+venv
+src
+.env
+service-account.json
+MEMORY.md
+.env.example

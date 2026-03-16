@@ -11,3 +11,4 @@ dist/
 *.sqlite3
 service-account.json
 .vercel/
+.vercel
