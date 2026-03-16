@@ -9,3 +9,5 @@ node_modules/
 dist/
 .cache/
 *.sqlite3
+service-account.json
+.vercel/
