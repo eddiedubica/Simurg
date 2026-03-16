@@ -1,20 +1,26 @@
 """
 Ежедневный отчёт для чата отдела продаж.
-Собирает данные из AmoCRM + Google Sheets.
+Данные берутся из AmoCRM (кастомные поля сделок).
+
+Поля AmoCRM:
+- Оплачено (ID 821273) — сумма оплаты
+- Осталось оплатить (ID 821275) — дебиторка
+- Стоимость тарифа (ID 821277) — полная цена
+- Название тарифа (ID 821271) — название тарифа
+- Тип оплаты (ID 843125) — Автооплата / Оплата ОП / Консультация / Возврат
+- Статус заказа (ID 843285) — Новый / Частично оплачен / Завершен / Отменен
+
+Этапы воронки "База" (ID 9932206):
+- Обращения, Предзапись, Заявка, Первое-Четвёртое касание,
+  Лид вышел на связь, Оффер озвучен, Счет выставлен,
+  Рассрочка одобрена, Дожим, Предоплата, ВР, Автооплата, Возврат
 """
 
-import locale
 import logging
 from datetime import datetime, timedelta
 
 import sys
 sys.path.insert(0, "..")
-
-# Русская локаль для дат
-try:
-    locale.setlocale(locale.LC_TIME, "ru_RU.UTF-8")
-except locale.Error:
-    pass
 
 MONTHS_RU = {
     1: "января", 2: "февраля", 3: "марта", 4: "апреля",
@@ -22,184 +28,194 @@ MONTHS_RU = {
     9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
 }
 
+# Этапы воронки "База" — ID статусов
+STATUSES = {
+    78894162: "Неразобранное",
+    79023274: "Обращения",
+    78894166: "Предзапись",
+    78917170: "Заявка",
+    84345658: "Первое касание",
+    84345662: "Второе касание",
+    84345666: "Третье касание",
+    84345670: "Четвёртое касание",
+    84345674: "Лид вышел на связь",
+    84345678: "Оффер озвучен",
+    84345682: "Счет выставлен",
+    84345686: "Рассрочка одобрена",
+    84345690: "Дожим",
+    78917202: "Предоплата",
+    78917206: "ВР",
+    78917210: "Автооплата",
+    79048314: "Возврат",
+    142: "Успешно реализовано",
+    143: "Закрыто и не реализовано",
+}
+
 from amocrm_client import AmoCRMClient
-from sheets_client import get_payments_data
 from telegram_bot import send_message
 
 logger = logging.getLogger(__name__)
 
 
 def _format_number(n):
-    """Форматирует число с разделителями: 1234567 -> 1 234 567"""
+    """1234567 -> 1 234 567"""
     return f"{n:,.0f}".replace(",", " ")
 
 
-def _get_yesterday():
-    """Вчерашняя дата."""
-    return datetime.now() - timedelta(days=1)
+def _get_cf(lead, field_name):
+    """Получить значение кастомного поля сделки."""
+    for cf in lead.get("custom_fields_values") or []:
+        if cf.get("field_name") == field_name:
+            values = cf.get("values", [])
+            return values[0]["value"] if values else None
+    return None
+
+
+def _get_cf_num(lead, field_name):
+    """Получить числовое значение кастомного поля."""
+    val = _get_cf(lead, field_name)
+    if val is None:
+        return 0
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return 0
 
 
 def build_daily_report(amo: AmoCRMClient):
-    """Собирает и форматирует ежедневный отчёт."""
-    yesterday = _get_yesterday()
-    yesterday_str = yesterday.strftime("%d.%m.%Y")
-    report_date = f"{yesterday.day} {MONTHS_RU[yesterday.month]}"
+    """Собирает ежедневный отчёт из AmoCRM."""
+    today = datetime.now()
+    yesterday = today - timedelta(days=1)
+    yesterday_start = int(yesterday.replace(hour=0, minute=0, second=0).timestamp())
+    yesterday_end = int(yesterday.replace(hour=23, minute=59, second=59).timestamp())
+    report_date = f"{today.day} {MONTHS_RU[today.month]}"
 
-    # === 1. ПОЛУЧАЕМ ВОРОНКИ И СТАТУСЫ ===
-    pipelines = amo.get_pipelines()
-    pipelines_map = {}
-    for p in pipelines:
-        statuses = {s["id"]: s["name"] for s in p.get("_embedded", {}).get("statuses", [])}
-        pipelines_map[p["id"]] = {
-            "name": p["name"],
-            "statuses": statuses,
-        }
-
-    # === 2. СОБИРАЕМ СТАТИСТИКУ ПО БАЗАМ ===
-    # Получаем все активные сделки
+    # Все сделки
     all_leads = amo.get_all_leads()
 
-    # Группируем по тегам/воронкам для формирования "баз в работе"
-    bases = {}
+    # === ПОДСЧЁТЫ ===
+    total_paid = 0          # Общая сумма оплат (факт)
+    total_debitorka = 0     # Общая дебиторка
+    sales_yesterday = 0     # Продажи за вчера
+    full_payments = 0       # Полные оплаты
+    prepayments = 0         # Предоплаты
+    returns = 0             # Возвраты (ВР)
+    auto_payments = 0       # Автооплаты
+
+    # По тарифам
+    tariffs = {}            # {название: {"count": N, "paid": сумма}}
+
+    # По этапам воронки
+    stages = {}             # {название_этапа: кол-во}
+
+    # По тегам (базы)
+    bases = {}              # {тег: кол-во}
+
+    # По типу оплаты
+    op_sales = 0            # Продажи ОП
+    consultations = 0       # Консультации
+
     for lead in all_leads:
-        tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", [])]
-        pipeline_id = lead.get("pipeline_id")
-        pipeline_name = pipelines_map.get(pipeline_id, {}).get("name", "Без воронки")
-
-        # Ключ базы — по тегу или по воронке
-        base_key = tags[0] if tags else pipeline_name
-        if base_key not in bases:
-            bases[base_key] = {"total": 0, "processed": 0}
-
-        bases[base_key]["total"] += 1
-
-        # Считаем обработанными если есть примечание/задача/событие
+        paid = _get_cf_num(lead, "Оплачено")
+        left = _get_cf_num(lead, "Осталось оплатить")
+        tariff_name = _get_cf(lead, "Название тарифа") or "Не указан"
+        payment_type = _get_cf(lead, "Тип оплаты") or ""
+        order_status = _get_cf(lead, "Статус заказа") or ""
         status_id = lead.get("status_id", 0)
-        # Статус 142/143 — успешно/провально закрыта, считаем обработанной
-        if status_id in (142, 143) or lead.get("loss_reason_id"):
-            bases[base_key]["processed"] += 1
-        elif lead.get("updated_at", 0) > lead.get("created_at", 0):
-            bases[base_key]["processed"] += 1
 
-    # === 3. ДАННЫЕ ИЗ GOOGLE SHEETS (ОПЛАТЫ) ===
-    sales_today = 0
-    total_sales = 0
-    debitorka = 0
-    full_payments = 0
-    prepayments = 0
+        # Общие суммы
+        total_paid += paid
+        total_debitorka += left
 
-    try:
-        payments = get_payments_data()
-        for row in payments:
-            # Пытаемся распарсить данные. Названия колонок зависят от таблицы
-            amount = row.get("Сумма", row.get("сумма", row.get("amount", "0")))
-            try:
-                amount = float(str(amount).replace(" ", "").replace(",", ".").replace("₽", "").strip())
-            except (ValueError, TypeError):
-                amount = 0
+        # Продажи за вчера (по дате обновления)
+        updated = lead.get("updated_at", 0)
+        if yesterday_start <= updated <= yesterday_end and paid > 0:
+            sales_yesterday += paid
 
-            date_str = row.get("Дата", row.get("дата", row.get("date", "")))
-            payment_type = row.get("Тип", row.get("тип", row.get("type", ""))).lower()
-            status = row.get("Статус", row.get("статус", row.get("status", ""))).lower()
+        # Подсчёт по типу оплаты
+        if payment_type == "Оплата ОП":
+            op_sales += 1
+        elif payment_type == "Консультация":
+            consultations += 1
+        elif payment_type == "Автооплата":
+            auto_payments += 1
+        elif payment_type == "Возврат":
+            returns += 1
 
-            # Суммируем
-            total_sales += amount
+        # Полные vs предоплаты
+        if order_status == "Завершен" and paid > 0:
+            full_payments += 1
+        elif order_status == "Частично оплачен":
+            prepayments += 1
 
-            if yesterday_str in str(date_str):
-                sales_today += amount
+        # По этапам воронки
+        stage_name = STATUSES.get(status_id, f"Неизвестный ({status_id})")
+        stages[stage_name] = stages.get(stage_name, 0) + 1
 
-            if "дебитор" in status or "частич" in payment_type:
-                debitorka += amount
+        # По тарифам (группируем по ключевым словам)
+        tariff_key = tariff_name
+        if "ментор" in tariff_name.lower():
+            tariff_key = "С ментором"
+        elif "наставник" in tariff_name.lower():
+            tariff_key = "С наставником"
 
-            if "полн" in payment_type:
-                full_payments += 1
-            elif "предоплат" in payment_type or "аванс" in payment_type:
-                prepayments += 1
+        if tariff_key not in tariffs:
+            tariffs[tariff_key] = {"count": 0, "paid": 0}
+        tariffs[tariff_key]["count"] += 1
+        tariffs[tariff_key]["paid"] += paid
 
-    except Exception as e:
-        logger.warning(f"Не удалось прочитать Google Sheets: {e}")
+        # По тегам (базы)
+        tags = [t["name"] for t in lead.get("_embedded", {}).get("tags", [])]
+        for tag in tags:
+            bases[tag] = bases.get(tag, 0) + 1
 
-    # === 4. СДЕЛКИ ПО ТАРИФАМ ===
-    tariff_stats = {}
-    decision_stage_count = 0
+    # Этапы где идёт "дожим" (оффер, счёт, рассрочка, дожим)
+    decision_stages = ["Оффер озвучен", "Счет выставлен", "Рассрочка одобрена", "Дожим"]
+    decision_count = sum(stages.get(s, 0) for s in decision_stages)
 
-    for lead in all_leads:
-        # Кастомные поля — ищем "тариф"
-        custom_fields = lead.get("custom_fields_values") or []
-        for cf in custom_fields:
-            if "тариф" in cf.get("field_name", "").lower():
-                values = cf.get("values", [])
-                tariff = values[0]["value"] if values else "Не указан"
-                tariff_stats[tariff] = tariff_stats.get(tariff, 0) + 1
-
-        # Этап "принятие решения" — ищем по названию статуса
-        pipeline_id = lead.get("pipeline_id")
-        status_id = lead.get("status_id")
-        status_name = pipelines_map.get(pipeline_id, {}).get("statuses", {}).get(status_id, "")
-        if "принят" in status_name.lower() and "решен" in status_name.lower():
-            decision_stage_count += 1
-
-    # === 5. ДИАГНОСТИКИ ===
-    # Ищем воронку или тег "диагностик"
-    diag_total = 0
-    diag_yesterday = 0
-    diag_paid = 0
-    diag_offers = 0
-
-    for lead in all_leads:
-        tags = [t["name"].lower() for t in lead.get("_embedded", {}).get("tags", [])]
-        pipeline_name = pipelines_map.get(lead.get("pipeline_id"), {}).get("name", "").lower()
-
-        if "диагностик" in pipeline_name or any("диагностик" in t for t in tags):
-            diag_total += 1
-            created = lead.get("created_at", 0)
-            created_date = datetime.fromtimestamp(created).date()
-            if created_date == yesterday.date():
-                diag_yesterday += 1
-            if lead.get("status_id") == 142:  # Успешно закрыта
-                diag_paid += 1
-
-    diag_conversion = round(diag_paid / diag_total * 100, 1) if diag_total > 0 else 0
-
-    # === 6. ФОРМИРУЕМ ОТЧЁТ ===
+    # === ФОРМИРУЕМ ОТЧЁТ ===
     lines = [f"<b>📊 Отчёт {report_date}</b>\n"]
 
-    # Базы в работе
+    # Базы в работе (по тегам)
     if bases:
         lines.append("<b>Какие базы в работе:</b>\n")
-        for name, counts in sorted(bases.items()):
-            lines.append(f"– {name} {counts['processed']}/{counts['total']}")
+        for tag, count in sorted(bases.items(), key=lambda x: -x[1]):
+            lines.append(f"– {tag}: {count}")
         lines.append("")
 
+    # Распределение по этапам воронки
+    lines.append("<b>По этапам воронки:</b>\n")
+    for status_id_key in STATUSES:
+        name = STATUSES[status_id_key]
+        count = stages.get(name, 0)
+        if count > 0:
+            lines.append(f"– {name}: {count}")
+    lines.append("")
+
     # Продажи
-    lines.append(f"💰 Сумма продаж за {yesterday.strftime('%d %B')}: <b>{_format_number(sales_today)} руб.</b>")
-    lines.append(f"💰 Дебиторка: <b>{_format_number(debitorka)} руб.</b>")
-    lines.append(f"💰 Сумма запуска (факт): <b>{_format_number(total_sales)} руб.</b>")
-    lines.append(f"💰 Сумма запуска (факт) + дебиторка = <b>{_format_number(total_sales + debitorka)} руб.</b>")
+    lines.append(f"💰 Сумма продаж за {yesterday.day} {MONTHS_RU[yesterday.month]}: <b>{_format_number(sales_yesterday)} руб.</b>")
+    lines.append(f"💰 Дебиторка: <b>{_format_number(total_debitorka)} руб.</b>")
+    lines.append(f"💰 Сумма запуска (факт): <b>{_format_number(total_paid)} руб.</b>")
+    lines.append(f"💰 Факт + дебиторка = <b>{_format_number(total_paid + total_debitorka)} руб.</b>")
     lines.append("")
 
     # Тарифы
-    if tariff_stats:
-        for tariff, count in tariff_stats.items():
-            lines.append(f"<b>{tariff}:</b>")
-            lines.append(f"Кол-во продаж: {count}")
+    if tariffs:
+        for name, data in sorted(tariffs.items()):
+            lines.append(f"<b>{name}:</b>")
+            lines.append(f"  Кол-во: {data['count']}")
+            lines.append(f"  Оплачено: {_format_number(data['paid'])} руб.")
         lines.append("")
 
-    lines.append(f"Кол-во полных продаж: {full_payments}")
+    lines.append(f"Кол-во полных оплат: {full_payments}")
     lines.append(f"Кол-во предоплат: {prepayments}")
+    lines.append(f"Кол-во ВР: {stages.get('ВР', 0)}")
+    lines.append(f"Кол-во автооплат: {auto_payments}")
+    if returns:
+        lines.append(f"Кол-во возвратов: {returns}")
     lines.append("")
 
-    lines.append(f"На этапе принятия решения: <b>{decision_stage_count} человек</b>")
-    lines.append("")
-
-    # Диагностики
-    if diag_total > 0:
-        lines.append("<b>Статистика по диагностикам:</b>\n")
-        lines.append(f"— За вчера проведено {diag_yesterday} диагностик")
-        lines.append(f"— Суммарно проведено {diag_total} диагностик")
-        lines.append(f"— Оплаты: {diag_paid}")
-        lines.append(f"— Конверсия в оплату: {diag_conversion}%")
-        lines.append("")
+    lines.append(f"На этапе принятия решения: <b>{decision_count} человек</b>")
 
     return "\n".join(lines)
 
