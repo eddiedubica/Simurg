@@ -101,6 +101,7 @@ def build_daily_report(amo: AmoCRMClient):
     prepayments = 0         # Предоплаты
     returns = 0             # Возвраты (ВР)
     auto_payments = 0       # Автооплаты
+    auto_payments_sum = 0   # Сумма автооплат
 
     # По тарифам
     tariffs = {}            # {название: {"count": N, "paid": сумма}}
@@ -113,7 +114,9 @@ def build_daily_report(amo: AmoCRMClient):
 
     # По типу оплаты
     op_sales = 0            # Продажи ОП
+    op_sales_sum = 0        # Сумма продаж ОП
     consultations = 0       # Консультации
+    consultations_sum = 0   # Сумма консультаций
 
     for lead in all_leads:
         paid = _get_cf_num(lead, "Оплачено")
@@ -135,10 +138,17 @@ def build_daily_report(amo: AmoCRMClient):
         # Подсчёт по типу оплаты
         if payment_type == "Оплата ОП":
             op_sales += 1
+            op_sales_sum += paid
         elif payment_type == "Консультация":
             consultations += 1
+            consultations_sum += paid
         elif payment_type == "Автооплата":
             auto_payments += 1
+            auto_payments_sum += paid
+        elif payment_type == "Автооплата и Оплата ОП":
+            auto_payments += 1
+            auto_payments_sum += paid
+            op_sales += 1
         elif payment_type == "Возврат":
             returns += 1
 
@@ -207,10 +217,24 @@ def build_daily_report(amo: AmoCRMClient):
             lines.append(f"  Оплачено: {_format_number(data['paid'])} руб.")
         lines.append("")
 
+    # Разбивка ОП vs Автооплата
+    lines.append("<b>Продажи ОП:</b>")
+    lines.append(f"  Кол-во: {op_sales}")
+    lines.append(f"  Сумма: {_format_number(op_sales_sum)} руб.")
+    lines.append("")
+    lines.append("<b>Автооплаты:</b>")
+    lines.append(f"  Кол-во: {auto_payments}")
+    lines.append(f"  Сумма: {_format_number(auto_payments_sum)} руб.")
+    if consultations:
+        lines.append("")
+        lines.append("<b>Консультации:</b>")
+        lines.append(f"  Кол-во: {consultations}")
+        lines.append(f"  Сумма: {_format_number(consultations_sum)} руб.")
+    lines.append("")
+
     lines.append(f"Кол-во полных оплат: {full_payments}")
     lines.append(f"Кол-во предоплат: {prepayments}")
     lines.append(f"Кол-во ВР: {stages.get('ВР', 0)}")
-    lines.append(f"Кол-во автооплат: {auto_payments}")
     if returns:
         lines.append(f"Кол-во возвратов: {returns}")
     lines.append("")
