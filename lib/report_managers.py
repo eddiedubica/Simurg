@@ -15,8 +15,9 @@ def build_manager_report(amo):
     yesterday_end = int(yesterday.replace(hour=23, minute=59, second=59).timestamp())
     report_date = f"{yesterday.day} {MONTHS_RU[yesterday.month]}"
 
+    EXCLUDE_USERS = {"Владлена Шатилина", "Симург", "GSG"}
     users = amo.get_users()
-    managers = [u for u in users if u.get("rights", {}).get("is_active", True)]
+    managers = [u for u in users if u.get("rights", {}).get("is_active", True) and u["name"] not in EXCLUDE_USERS]
     managers_map = {m["id"]: m["name"] for m in managers}
 
     all_leads = amo.get_all_leads()
