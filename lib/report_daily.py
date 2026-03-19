@@ -124,15 +124,16 @@ def build_daily_report(amo):
         stage_name = STATUSES.get(status_id, f"Неизвестный ({status_id})")
         stages[stage_name] = stages.get(stage_name, 0) + 1
 
-        tariff_key = tariff_name
-        if "ментор" in tariff_name.lower():
-            tariff_key = "С ментором"
-        elif "наставник" in tariff_name.lower():
-            tariff_key = "С наставником"
-        if tariff_key not in tariffs:
-            tariffs[tariff_key] = {"count": 0, "paid": 0}
-        tariffs[tariff_key]["count"] += 1
-        tariffs[tariff_key]["paid"] += paid
+        if tariff_name != "Не указан":
+            tariff_key = tariff_name
+            if "ментор" in tariff_name.lower():
+                tariff_key = "С ментором"
+            elif "наставник" in tariff_name.lower():
+                tariff_key = "С наставником"
+            if tariff_key not in tariffs:
+                tariffs[tariff_key] = {"count": 0, "paid": 0}
+            tariffs[tariff_key]["count"] += 1
+            tariffs[tariff_key]["paid"] += paid
 
         # Базы по тегам
         processed_stages = {
