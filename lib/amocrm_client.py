@@ -87,13 +87,28 @@ class AmoCRMClient:
 
     # === ЗАМЕТКИ ===
 
-    def get_note(self, entity_type, entity_id, note_id):
-        """Получить одну заметку по ID."""
-        return self._request("GET", f"{entity_type}/{entity_id}/notes/{note_id}")
+    def get_lead_notes(self, lead_id, **filters):
+        """Получить все заметки лида с пагинацией."""
+        all_notes = []
+        page = 1
+        while True:
+            params = {"page": page, "limit": 250}
+            params.update(filters)
+            data = self._request("GET", f"leads/{lead_id}/notes", params=params)
+            if not data or "_embedded" not in data:
+                break
+            notes = data["_embedded"]["notes"]
+            all_notes.extend(notes)
+            if len(notes) < 250:
+                break
+            page += 1
+        return all_notes
 
-    def get_notes_by_ids(self, events):
-        """Получить заметки из списка событий звонков. Возвращает список заметок с duration."""
-        notes = []
+    def get_call_notes_batch(self, events):
+        """Пакетное получение заметок звонков. Группирует по lead_id → один запрос на лид."""
+        # Собираем маппинг: note_id → created_by (кто звонил)
+        note_to_user = {}
+        leads_needed = set()
         for e in events:
             va = e.get("value_after", [])
             if not va:
@@ -101,16 +116,25 @@ class AmoCRMClient:
             note_info = va[0].get("note", {})
             note_id = note_info.get("id")
             entity_id = e.get("entity_id")
-            if not note_id or not entity_id:
-                continue
+            if note_id and entity_id:
+                note_to_user[note_id] = e.get("created_by")
+                leads_needed.add(entity_id)
+
+        # Пакетно: один запрос на лид, получаем все call-заметки
+        result = []
+        for lead_id in leads_needed:
             try:
-                note = self._request("GET", f"leads/{entity_id}/notes/{note_id}")
-                if note:
-                    note["_event_created_by"] = e.get("created_by")
-                    notes.append(note)
+                notes = self.get_lead_notes(lead_id, **{
+                    "filter[note_type]": "call_out,call_in",
+                })
+                for note in notes:
+                    nid = note.get("id")
+                    if nid in note_to_user:
+                        note["_event_created_by"] = note_to_user[nid]
+                        result.append(note)
             except Exception:
                 continue
-        return notes
+        return result
 
     # === КОНТАКТЫ ===
 

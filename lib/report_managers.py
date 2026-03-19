@@ -51,8 +51,8 @@ def build_manager_report(amo):
             if uid in managers_map:
                 calls_by_mgr[uid] = calls_by_mgr.get(uid, 0) + 1
 
-    # Результативные звонки (> 3 минут) — получаем заметки с duration
-    call_notes = amo.get_notes_by_ids(all_call_events)
+    # Результативные звонки (> 3 минут) — пакетно по лидам
+    call_notes = amo.get_call_notes_batch(all_call_events)
     for note in call_notes:
         params = note.get("params", {})
         duration = params.get("duration", 0)
