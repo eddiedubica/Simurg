@@ -35,18 +35,30 @@ def build_manager_report(amo):
             sales_by_mgr[rid] = sales_by_mgr.get(rid, 0) + 1
 
     calls_by_mgr = {}
+    effective_calls_by_mgr = {}
     msgs_by_mgr = {}
 
+    all_call_events = []
     for etype in ("outgoing_call", "incoming_call"):
         events = amo.get_all_events(**{
             "filter[type]": etype,
             "filter[created_at][from]": yesterday_start,
             "filter[created_at][to]": yesterday_end,
         })
+        all_call_events.extend(events)
         for e in events:
             uid = e.get("created_by")
             if uid in managers_map:
                 calls_by_mgr[uid] = calls_by_mgr.get(uid, 0) + 1
+
+    # Результативные звонки (> 3 минут) — получаем заметки с duration
+    call_notes = amo.get_notes_by_ids(all_call_events)
+    for note in call_notes:
+        params = note.get("params", {})
+        duration = params.get("duration", 0)
+        uid = note.get("_event_created_by")
+        if uid in managers_map and duration > 180:
+            effective_calls_by_mgr[uid] = effective_calls_by_mgr.get(uid, 0) + 1
 
     msg_events = amo.get_all_events(**{
         "filter[type]": "outgoing_chat_message",
@@ -66,6 +78,7 @@ def build_manager_report(amo):
     for mid, mname in sorted_mgrs:
         lc = leads_by_mgr.get(mid, 0)
         cc = calls_by_mgr.get(mid, 0)
+        ec = effective_calls_by_mgr.get(mid, 0)
         mc = msgs_by_mgr.get(mid, 0)
         sc = sales_by_mgr.get(mid, 0)
         if lc == 0 and cc == 0 and mc == 0:
@@ -74,6 +87,7 @@ def build_manager_report(amo):
         lines.append(f"<b>{mname}:</b>")
         lines.append(f"  👥 Клиентов в работе: {lc}")
         lines.append(f"  📞 Звонков: {cc}")
+        lines.append(f"  ✅ Результативных (>3 мин): {ec}")
         lines.append(f"  💬 Диалогов: {mc}")
         lines.append(f"  💰 Продаж: {sc}")
         lines.append("")
@@ -83,11 +97,13 @@ def build_manager_report(amo):
 
     tl = sum(leads_by_mgr.values())
     tc = sum(calls_by_mgr.values())
+    tec = sum(effective_calls_by_mgr.values())
     tm = sum(msgs_by_mgr.values())
     ts = sum(sales_by_mgr.values())
     lines.append("<b>📈 Итого:</b>")
     lines.append(f"  👥 Клиентов в работе: {tl}")
     lines.append(f"  📞 Звонков: {tc}")
+    lines.append(f"  ✅ Результативных (>3 мин): {tec}")
     lines.append(f"  💬 Диалогов: {tm}")
     lines.append(f"  💰 Продаж: {ts}")
 

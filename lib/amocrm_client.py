@@ -85,6 +85,33 @@ class AmoCRMClient:
             page += 1
         return all_events
 
+    # === ЗАМЕТКИ ===
+
+    def get_note(self, entity_type, entity_id, note_id):
+        """Получить одну заметку по ID."""
+        return self._request("GET", f"{entity_type}/{entity_id}/notes/{note_id}")
+
+    def get_notes_by_ids(self, events):
+        """Получить заметки из списка событий звонков. Возвращает список заметок с duration."""
+        notes = []
+        for e in events:
+            va = e.get("value_after", [])
+            if not va:
+                continue
+            note_info = va[0].get("note", {})
+            note_id = note_info.get("id")
+            entity_id = e.get("entity_id")
+            if not note_id or not entity_id:
+                continue
+            try:
+                note = self._request("GET", f"leads/{entity_id}/notes/{note_id}")
+                if note:
+                    note["_event_created_by"] = e.get("created_by")
+                    notes.append(note)
+            except Exception:
+                continue
+        return notes
+
     # === КОНТАКТЫ ===
 
     def get_contact(self, contact_id):
