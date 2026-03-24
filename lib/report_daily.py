@@ -1,5 +1,6 @@
 """Ежедневный отчёт ОП из AmoCRM."""
 
+import re
 from datetime import datetime, timedelta
 
 MONTHS_RU = {
@@ -72,8 +73,6 @@ def build_daily_report(amo):
     auto_payments_sum = 0
     op_sales = 0
     op_sales_sum = 0
-    consultations = 0
-    consultations_sum = 0
     tariffs = {}
     stages = {}
     bases = {}
@@ -86,32 +85,25 @@ def build_daily_report(amo):
         order_status = _cf(lead, "Статус заказа") or ""
         status_id = lead.get("status_id", 0)
 
-        total_paid += paid
-        total_debitorka += left
+        # Факт = Предоплата + ВР + Автооплата + Успешно (поле "Оплачено")
+        if status_id in {78917202, 78917206, 78917210, 142}:
+            total_paid += paid
+        # Дебиторка = Предоплата + ВР (поле "Осталось оплатить")
+        if status_id in {78917202, 78917206}:
+            total_debitorka += left
 
         updated = lead.get("updated_at", 0)
         if yesterday_start <= updated <= yesterday_end and paid > 0:
             sales_yesterday += paid
 
-        # ОП vs Авто — по этапам Предоплата, ВР, Автооплата, Успешно
-        payment_stages = {78917202, 78917206, 78917210, 142}
-        if status_id in payment_stages and paid > 0:
-            if payment_type in ("Оплата ОП", "Автооплата и Оплата ОП"):
-                op_sales += 1
-                op_sales_sum += paid
-            elif payment_type == "Автооплата":
-                auto_payments += 1
-                auto_payments_sum += paid
-            elif payment_type == "Консультация":
-                consultations += 1
-                consultations_sum += paid
-            else:
-                if status_id == 78917210:
-                    auto_payments += 1
-                    auto_payments_sum += paid
-                else:
-                    op_sales += 1
-                    op_sales_sum += paid
+        # Продажи ОП = Предоплата + ВР + Успешно
+        if status_id in {78917202, 78917206, 142} and paid > 0:
+            op_sales += 1
+            op_sales_sum += paid
+        # Автооплаты = этап Автооплата
+        if status_id == 78917210 and paid > 0:
+            auto_payments += 1
+            auto_payments_sum += paid
 
         if payment_type == "Возврат" or status_id == 79048314:
             returns += 1
@@ -125,10 +117,10 @@ def build_daily_report(amo):
         stages[stage_name] = stages.get(stage_name, 0) + 1
 
         if tariff_name != "Не указан":
-            tariff_key = tariff_name
-            if "ментор" in tariff_name.lower():
+            tariff_key = re.sub(r'\s+', ' ', tariff_name).strip()
+            if "ментор" in tariff_key.lower():
                 tariff_key = "С ментором"
-            elif "наставник" in tariff_name.lower():
+            elif "наставник" in tariff_key.lower():
                 tariff_key = "С наставником"
             if tariff_key not in tariffs:
                 tariffs[tariff_key] = {"count": 0, "paid": 0}
@@ -194,11 +186,6 @@ def build_daily_report(amo):
     lines.append("<b>Автооплаты:</b>")
     lines.append(f"  Кол-во: {auto_payments}")
     lines.append(f"  Сумма: {_fmt(auto_payments_sum)} руб.")
-    if consultations:
-        lines.append("")
-        lines.append("<b>Консультации:</b>")
-        lines.append(f"  Кол-во: {consultations}")
-        lines.append(f"  Сумма: {_fmt(consultations_sum)} руб.")
     lines.append("")
 
     lines.append(f"Кол-во полных оплат: {full_payments}")
